@@ -1,5 +1,6 @@
 mod cipher;
 mod errors;
+mod room_mapping;
 mod iris_stream;
 
 use serde::{Deserialize, Serialize};
