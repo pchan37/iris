@@ -1,5 +1,11 @@
 mod cipher;
 mod errors;
+mod iris_stream;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum IrisMessage {}
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right
