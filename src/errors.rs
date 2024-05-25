@@ -27,4 +27,13 @@ pub enum IrisError {
     /// should not happen on major platforms. Fixing this is low priority at the moment.
     #[error("your platform is currently not supported")]
     U32TypecastError(#[from] TryFromIntError),
+    /// The bad connection info was given or unable to set_nodelay to true.
+    #[error("unable to make a connection, please confirm the server ip address and port")]
+    StreamInitializationError,
+    /// Reading from the stream failed.
+    #[error("unable to receive data over the connection, please ensure that you are still connected to the other party")]
+    UserConnectionReadError,
+    /// Writing to the stream failed.
+    #[error("unable to send data over the connection, please ensure that you are still connected to the other party")]
+    UserConnectionWriteError,
 }
