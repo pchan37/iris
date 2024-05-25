@@ -44,6 +44,7 @@ pub trait IrisStream: IrisStreamEssentials {
         self.write_size_prefixed_message(&serialized_message)
     }
 
+    #[allow(dead_code)]
     fn forward_size_prefixed_message(
         &mut self,
         destination_stream: &mut dyn IrisStream,
