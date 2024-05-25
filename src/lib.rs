@@ -1,8 +1,8 @@
 mod cipher;
 mod errors;
-mod room_mapping;
 mod iris_stream;
 mod iris_tcp_stream;
+mod room_mapping;
 
 use serde::{Deserialize, Serialize};
 

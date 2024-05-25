@@ -28,7 +28,10 @@ impl RoomMapping {
         }
     }
 
-    pub fn get_and_remove_socket(&mut self, room_identifier: RoomIdentifier) -> Option<Box<dyn EncryptedIrisStream>> {
+    pub fn get_and_remove_socket(
+        &mut self,
+        room_identifier: RoomIdentifier,
+    ) -> Option<Box<dyn EncryptedIrisStream>> {
         self.rooms.remove(&room_identifier)
     }
 }
