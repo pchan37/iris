@@ -36,4 +36,10 @@ pub enum IrisError {
     /// Writing to the stream failed.
     #[error("unable to send data over the connection, please ensure that you are still connected to the other party")]
     UserConnectionWriteError,
+    /// Unable to access a "file" on the user system, usually due to lack of proper permissions
+    #[error("unable to access {0}, please ensure you have proper permissions")]
+    PermissionsUserIOError(String),
+    /// "File" already exists and the user did not allow overwriting
+    #[error("file {0} already exists, please use the '--conflicting-file-mode overwrite' flag to allow overwrite")]
+    AlreadyExistsUserIOError(String),
 }

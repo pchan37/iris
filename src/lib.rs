@@ -1,5 +1,6 @@
 mod cipher;
 mod errors;
+mod files;
 mod iris_stream;
 mod iris_tcp_stream;
 mod room_mapping;
