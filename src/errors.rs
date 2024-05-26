@@ -42,4 +42,10 @@ pub enum IrisError {
     /// "File" already exists and the user did not allow overwriting
     #[error("file {0} already exists, please use the '--conflicting-file-mode overwrite' flag to allow overwrite")]
     AlreadyExistsUserIOError(String),
+    /// Invalid passphrase may be due to improper format or bad room identifier.
+    #[error("invalid passphrase given, please confirm the passphrase with the sender")]
+    InvalidPassphrase,
+    /// The parameter for the finish() method is incorrect signaling either a bug or malicious activity.
+    #[error("error completing the key exchange, please reach out to the developer")]
+    SpakeError(spake2::Error),
 }
