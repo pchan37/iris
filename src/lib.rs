@@ -1,4 +1,5 @@
 mod cipher;
+mod constants;
 mod errors;
 mod files;
 mod iris_stream;
