@@ -1,5 +1,6 @@
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
+use crate::cipher::{get_cipher, CipherType};
 use crate::errors::IrisError;
 use crate::iris_stream::{EncryptedIrisStream, IrisStream};
 use crate::iris_tcp_stream::IrisTcpStream;
@@ -37,7 +38,8 @@ pub fn receive(
                 let key =
                     perform_key_exchange(&mut server_connection, room_identifier_str, passphrase)?;
                 tracing::info!("switching over to encrypted communication");
-                Ok(())
+
+                receive_transfer_metadata(&mut server_connection, cipher_type, &key)
             }
             IrisMessage::BadRoomIdentifier => Err(IrisError::InvalidPassphrase),
             _ => Err(IrisError::UnexpectedMessage),
@@ -62,4 +64,29 @@ fn perform_key_exchange(
     let key = s2.finish(&sender_code).map_err(IrisError::SpakeError)?;
 
     Ok(key)
+}
+
+fn receive_transfer_metadata(
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher_type: CipherType,
+    decryption_key: &[u8],
+) -> Result<(), IrisError> {
+    let cipher = get_cipher(cipher_type, decryption_key)?;
+
+    server_connection
+        .write_encrypted_iris_message(&*cipher, IrisMessage::ReadyToReceiveMetadata)?;
+    match server_connection.read_encrypted_iris_message(&*cipher)? {
+        IrisMessage::TransferMetadata {
+            total_files,
+            total_bytes,
+        } => {
+            tracing::info!(
+                "going to receive {total_bytes} bytes distributed among {total_files} files"
+            );
+            server_connection
+                .write_encrypted_iris_message(&*cipher, IrisMessage::ReadyToReceiveFiles)?;
+            Ok(())
+        }
+        _ => Err(IrisError::UnexpectedMessage),
+    }
 }

@@ -58,6 +58,22 @@ pub fn serve(ip_address: String, port: String) -> Result<(), IrisError> {
                                 .forward_message(sender_socket.as_mut())
                                 .unwrap();
                             sender_socket.forward_message(&mut receiver_socket).unwrap();
+
+                            // Forward the ReadyToReceiveTransfermetadata message
+                            // Fail the entire transaction if sender/receiver is disconnected via unwrap.
+                            receiver_socket
+                                .forward_message(sender_socket.as_mut())
+                                .unwrap();
+
+                            // Forward the total files and size
+                            // Fail the entire transaction if sender/receiver is disconnected via unwrap.
+                            sender_socket.forward_message(&mut receiver_socket).unwrap();
+
+                            // Forward the ReadyToReceiveFiles message
+                            // Fail the entire transaction if sender/receiver is disconnected via unwrap.
+                            receiver_socket
+                                .forward_message(sender_socket.as_mut())
+                                .unwrap();
                         } else {
                             // Fail the entire transaction if receiver is disconnected via unwrap.
                             receiver_socket

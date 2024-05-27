@@ -31,6 +31,12 @@ pub enum IrisMessage {
     SetCipherType {
         cipher_type: CipherType,
     },
+    ReadyToReceiveMetadata,
+    TransferMetadata {
+        total_files: usize,
+        total_bytes: u64,
+    },
+    ReadyToReceiveFiles,
     UnexpectedMessage,
     ServerError,
     BadRoomIdentifier,
