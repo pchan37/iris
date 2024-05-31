@@ -13,7 +13,7 @@ pub fn serve(ip_address: String, port: String) -> Result<(), IrisError> {
     let mut room_mapping = RoomMapping::new();
     loop {
         if let Ok((socket, addr)) = listener.accept() {
-            let mut socket = IrisTcpStream::new(socket);
+            let mut socket = IrisTcpStream::new(socket)?;
 
             if let Ok(message) = socket.read_iris_message() {
                 match message {

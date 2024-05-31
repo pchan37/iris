@@ -7,15 +7,12 @@ use crate::IrisMessage;
 pub trait IrisStreamEssentials {
     fn read_bytes(&mut self, num_bytes: u32) -> Result<Vec<u8>, IrisError>;
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), IrisError>;
-    fn read_ack(&mut self) -> Result<bool, IrisError>;
-    fn write_ack(&mut self) -> Result<(), IrisError>;
 }
 
 pub trait IrisStream: IrisStreamEssentials {
     fn read_size_prefixed_message(&mut self) -> Result<Vec<u8>, IrisError> {
         let size_as_bytes = self.read_bytes(u32::BITS / 8)?;
         let size = u32::from_be_bytes(size_as_bytes.try_into().unwrap());
-        self.write_ack()?;
 
         let message = self.read_bytes(size)?;
         Ok(message)
@@ -31,11 +28,7 @@ pub trait IrisStream: IrisStreamEssentials {
     fn write_size_prefixed_message(&mut self, bytes: &[u8]) -> Result<(), IrisError> {
         let size_as_bytes = u32::to_be_bytes(bytes.len().try_into()?);
         self.write_bytes(&size_as_bytes)?;
-        if self.read_ack()? {
-            self.write_bytes(bytes)
-        } else {
-            Err(IrisError::UnexpectedMessage)
-        }
+        self.write_bytes(bytes)
     }
 
     fn write_iris_message(&mut self, iris_message: IrisMessage) -> Result<(), IrisError> {

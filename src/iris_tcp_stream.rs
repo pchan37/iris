@@ -3,17 +3,21 @@ use std::net::TcpStream;
 
 use crate::errors::IrisError;
 use crate::iris_stream::{EncryptedIrisStream, IrisStream, IrisStreamEssentials};
-use crate::IrisMessage;
-
-const ACK_SIZE: u32 = 13;
 
 pub struct IrisTcpStream {
     stream: TcpStream,
+    buffered_stream: BufReader<TcpStream>,
 }
 
 impl IrisTcpStream {
-    pub fn new(stream: TcpStream) -> Self {
-        Self { stream }
+    pub fn new(stream: TcpStream) -> Result<Self, IrisError> {
+        let stream_clone = stream
+            .try_clone()
+            .map_err(|_| IrisError::StreamInitializationError)?;
+        Ok(Self {
+            stream,
+            buffered_stream: BufReader::new(stream_clone),
+        })
     }
 
     pub fn connect(connection_info: String) -> Result<Self, IrisError> {
@@ -22,19 +26,30 @@ impl IrisTcpStream {
         stream
             .set_nodelay(true)
             .map_err(|_| IrisError::StreamInitializationError)?;
-        Ok(IrisTcpStream { stream })
+        let stream_clone = stream
+            .try_clone()
+            .map_err(|_| IrisError::StreamInitializationError)?;
+
+        Ok(IrisTcpStream {
+            stream,
+            buffered_stream: BufReader::new(stream_clone),
+        })
     }
 
     pub fn try_clone(&self) -> Result<Self, std::io::Error> {
         let stream = self.stream.try_clone()?;
-        Ok(Self { stream })
+        let stream_clone = stream.try_clone()?;
+        Ok(Self {
+            stream,
+            buffered_stream: BufReader::new(stream_clone),
+        })
     }
 }
 
 impl IrisStreamEssentials for IrisTcpStream {
     fn read_bytes(&mut self, num_bytes: u32) -> Result<Vec<u8>, IrisError> {
         let mut bytes = vec![0; num_bytes.try_into()?];
-        BufReader::new(&self.stream)
+        self.buffered_stream
             .read_exact(&mut bytes)
             .map_err(|_| IrisError::UserConnectionReadError)?;
 
@@ -49,33 +64,7 @@ impl IrisStreamEssentials for IrisTcpStream {
             .flush()
             .map_err(|_| IrisError::UserConnectionWriteError)
     }
-
-    fn read_ack(&mut self) -> Result<bool, IrisError> {
-        let message = self.read_bytes(ACK_SIZE)?;
-        Ok(matches!(
-            serde_json::from_slice(&message).map_err(|_| IrisError::DeserializationError)?,
-            IrisMessage::Acknowledge
-        ))
-    }
-
-    fn write_ack(&mut self) -> Result<(), IrisError> {
-        let serialized_ack = serde_json::to_vec(&IrisMessage::Acknowledge)
-            .map_err(|_| IrisError::SerializationError)?;
-        self.write_bytes(&serialized_ack)
-    }
 }
 
 impl IrisStream for IrisTcpStream {}
 impl EncryptedIrisStream for IrisTcpStream {}
-
-#[cfg(test)]
-mod tests {
-    use crate::iris_tcp_stream::ACK_SIZE;
-    use crate::IrisMessage;
-
-    #[test]
-    fn test_ack_size_is_correct() {
-        let serialized_ack = serde_json::to_vec(&IrisMessage::Acknowledge).unwrap();
-        assert_eq!(ACK_SIZE, serialized_ack.len() as u32);
-    }
-}
