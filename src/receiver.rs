@@ -16,42 +16,52 @@ pub enum ConflictingFileMode {
     Error,
 }
 
-pub fn receive(
+pub fn simple_receive(
     server_ip: String,
     server_port: String,
-    passphrase: String,
+    room_identifier_str: &str,
+    passphrase: &str,
     conflicting_file_mode: ConflictingFileMode,
 ) -> Result<(), IrisError> {
-    if let Some((room_identifier_str, passphrase)) = passphrase.split_once('-') {
-        let room_identifier = room_identifier_str
-            .parse::<RoomIdentifier>()
-            .map_err(|_| IrisError::InvalidPassphrase)?;
-        tracing::debug!("connecting to room #{room_identifier}");
+    let room_identifier = room_identifier_str
+        .parse::<RoomIdentifier>()
+        .map_err(|_| IrisError::InvalidPassphrase)?;
+    tracing::debug!("connecting to room #{room_identifier}");
 
-        let mut server_connection = IrisTcpStream::connect(format!("{server_ip}:{server_port}"))?;
-        server_connection
-            .write_iris_message(IrisMessage::ReceiverConnecting { room_identifier })?;
+    let mut server_connection = IrisTcpStream::connect(format!("{server_ip}:{server_port}"))?;
+    server_connection.write_iris_message(IrisMessage::ReceiverConnecting { room_identifier })?;
 
-        match server_connection.read_iris_message()? {
-            IrisMessage::SetCipherType { cipher_type } => {
-                tracing::debug!("using cipher: {cipher_type:?}");
-                let key =
-                    perform_key_exchange(&mut server_connection, room_identifier_str, passphrase)?;
-                tracing::info!("switching over to encrypted communication");
+    receive(
+        &mut server_connection,
+        room_identifier,
+        passphrase,
+        conflicting_file_mode,
+    )
+}
 
-                receive_transfer_metadata(&mut server_connection, cipher_type, &key)
-            }
-            IrisMessage::BadRoomIdentifier => Err(IrisError::InvalidPassphrase),
-            _ => Err(IrisError::UnexpectedMessage),
+pub fn receive(
+    server_connection: &mut dyn EncryptedIrisStream,
+    room_identifier: RoomIdentifier,
+    passphrase: &str,
+    conflicting_file_mode: ConflictingFileMode,
+) -> Result<(), IrisError> {
+    match server_connection.read_iris_message()? {
+        IrisMessage::SetCipherType { cipher_type } => {
+            tracing::debug!("using cipher: {cipher_type:?}");
+            let key = perform_key_exchange(server_connection, room_identifier, passphrase)?;
+            tracing::info!("switching over to encrypted communication");
+
+            receive_transfer_metadata(server_connection, cipher_type, &key)?;
+            receive_files(server_connection, cipher_type, &key, conflicting_file_mode)
         }
-    } else {
-        Err(IrisError::InvalidPassphrase)
+        IrisMessage::BadRoomIdentifier => Err(IrisError::InvalidPassphrase),
+        _ => Err(IrisError::UnexpectedMessage),
     }
 }
 
 fn perform_key_exchange(
     server_connection: &mut dyn EncryptedIrisStream,
-    room_identifier: &str,
+    room_identifier: RoomIdentifier,
     passphrase: &str,
 ) -> Result<Vec<u8>, IrisError> {
     let (s2, outbound_msg) = Spake2::<Ed25519Group>::start_symmetric(
@@ -89,4 +99,13 @@ fn receive_transfer_metadata(
         }
         _ => Err(IrisError::UnexpectedMessage),
     }
+}
+
+fn receive_files(
+    _server_connection: &mut dyn EncryptedIrisStream,
+    _cipher_type: CipherType,
+    _decryption_key: &[u8],
+    _conficting_file_mode: ConflictingFileMode,
+) -> Result<(), IrisError> {
+    todo!()
 }

@@ -4,6 +4,7 @@ use jwalk::WalkDirGeneric;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 use crate::cipher::{get_cipher, CipherType};
+use crate::constants::CHUNK_SIZE;
 use crate::errors::IrisError;
 use crate::files::{FileMetadata, FileType};
 use crate::iris_stream::{EncryptedIrisStream, IrisStream};
@@ -11,7 +12,7 @@ use crate::iris_tcp_stream::IrisTcpStream;
 use crate::room_mapping::RoomIdentifier;
 use crate::IrisMessage;
 
-pub fn send(
+pub fn simple_send(
     server_ip: String,
     server_port: String,
     cipher_type: CipherType,
@@ -29,12 +30,13 @@ pub fn send(
                 server_connection.read_iris_message()?,
                 IrisMessage::ReceiverConnected
             ) {
-                server_connection.write_iris_message(IrisMessage::SetCipherType { cipher_type })?;
-                let key =
-                    perform_key_exchange(&mut server_connection, room_identifier, passphrase)?;
-                tracing::info!("switching over to encrypted communication");
-
-                send_transfer_metadata(&mut server_connection, cipher_type, &key, files)
+                send(
+                    &mut server_connection,
+                    room_identifier,
+                    passphrase,
+                    cipher_type,
+                    files,
+                )
             } else {
                 Err(IrisError::UnexpectedMessage)
             }
@@ -42,6 +44,28 @@ pub fn send(
         IrisMessage::ServerError => unreachable!(),
         _ => Err(IrisError::UnexpectedMessage),
     }
+}
+
+pub fn send(
+    server_connection: &mut dyn EncryptedIrisStream,
+    room_identifier: RoomIdentifier,
+    passphrase: &str,
+    cipher_type: CipherType,
+    files: Vec<PathBuf>,
+) -> Result<(), IrisError> {
+    server_connection.write_iris_message(IrisMessage::SetCipherType { cipher_type })?;
+    let key = perform_key_exchange(server_connection, room_identifier, passphrase)?;
+    tracing::info!("switching over to encrypted communication");
+
+    let complete_file_list = send_transfer_metadata(server_connection, cipher_type, &key, files)?;
+    let mut buffer = vec![0; CHUNK_SIZE];
+    send_files(
+        server_connection,
+        cipher_type,
+        &key,
+        complete_file_list,
+        &mut buffer,
+    )
 }
 
 fn perform_key_exchange(
@@ -66,7 +90,7 @@ fn send_transfer_metadata(
     cipher_type: CipherType,
     encryption_key: &[u8],
     files: Vec<PathBuf>,
-) -> Result<(), IrisError> {
+) -> Result<Vec<(PathBuf, FileMetadata)>, IrisError> {
     let cipher = get_cipher(cipher_type, encryption_key)?;
 
     let (complete_file_list, total_size) = get_complete_file_list_and_total_size(files)?;
@@ -93,7 +117,17 @@ fn send_transfer_metadata(
     }
     tracing::info!("sending files");
 
-    Ok(())
+    Ok(complete_file_list)
+}
+
+fn send_files(
+    _server_connection: &mut dyn EncryptedIrisStream,
+    _cipher_type: CipherType,
+    _encryption_key: &[u8],
+    _complete_file_list: Vec<(PathBuf, FileMetadata)>,
+    _buffer: &mut [u8],
+) -> Result<(), IrisError> {
+    todo!()
 }
 
 fn get_complete_file_list_and_total_size(

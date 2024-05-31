@@ -12,9 +12,9 @@ mod server;
 use serde::{Deserialize, Serialize};
 
 pub use crate::cipher::CipherType;
-pub use crate::receiver::{receive, ConflictingFileMode};
+pub use crate::receiver::{receive, simple_receive, ConflictingFileMode};
 use crate::room_mapping::RoomIdentifier;
-pub use crate::sender::send;
+pub use crate::sender::{send, simple_send};
 pub use crate::server::serve;
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
