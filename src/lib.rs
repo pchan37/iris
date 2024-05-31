@@ -2,7 +2,9 @@ mod cipher;
 mod constants;
 mod errors;
 mod files;
-mod iris_stream;
+#[doc(hidden)]
+pub mod iris_channel_stream;
+pub mod iris_stream;
 mod iris_tcp_stream;
 mod receiver;
 mod room_mapping;
@@ -17,7 +19,7 @@ use crate::room_mapping::RoomIdentifier;
 pub use crate::sender::{send, simple_send};
 pub use crate::server::serve;
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone, Copy)]
 pub enum IrisMessage {
     Acknowledge,
     SenderConnecting,
