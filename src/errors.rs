@@ -48,4 +48,7 @@ pub enum IrisError {
     /// The parameter for the finish() method is incorrect signaling either a bug or malicious activity.
     #[error("error completing the key exchange, please reach out to the developer")]
     SpakeError(spake2::Error),
+    /// Used for testing to signal no more data to be read
+    #[error("signal an EOF, used for testing")]
+    EndOfFile,
 }

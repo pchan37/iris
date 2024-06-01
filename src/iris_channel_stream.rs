@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::cipher::Cipher;
 use crate::errors::IrisError;
 use crate::iris_stream::{EncryptedIrisStream, IrisStream, IrisStreamEssentials};
@@ -21,7 +23,11 @@ impl IrisStreamEssentials for IrisChannelStream {
     fn read_bytes(&mut self, num_bytes: u32) -> Result<Vec<u8>, IrisError> {
         let mut bytes = vec![];
         for _ in 0..num_bytes {
-            bytes.push(self.rx_channel.recv().unwrap());
+            if let Ok(byte) = self.rx_channel.recv_timeout(Duration::from_millis(100)) {
+                bytes.push(byte);
+            } else {
+                Err(IrisError::EndOfFile)?
+            }
         }
         Ok(bytes)
     }
