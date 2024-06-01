@@ -39,6 +39,14 @@ pub enum IrisMessage {
         total_bytes: u64,
     },
     ReadyToReceiveFiles,
+    DirectoryCreated,
+    FileSkipped,
+    FileStartAtPos {
+        start_pos: u64,
+    },
+    ChunkReceived {
+        is_last: bool,
+    },
     UnexpectedMessage,
     ServerError,
     BadRoomIdentifier,

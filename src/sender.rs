@@ -1,9 +1,12 @@
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use jwalk::WalkDirGeneric;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
+use usize_cast::IntoUsize;
 
-use crate::cipher::{get_cipher, CipherType};
+use crate::cipher::{get_cipher, Cipher, CipherType};
 use crate::constants::CHUNK_SIZE;
 use crate::errors::IrisError;
 use crate::files::{FileMetadata, FileType};
@@ -58,14 +61,7 @@ pub fn send(
     tracing::info!("switching over to encrypted communication");
 
     let complete_file_list = send_transfer_metadata(server_connection, cipher_type, &key, files)?;
-    let mut buffer = vec![0; CHUNK_SIZE];
-    send_files(
-        server_connection,
-        cipher_type,
-        &key,
-        complete_file_list,
-        &mut buffer,
-    )
+    send_files(server_connection, cipher_type, &key, complete_file_list)
 }
 
 fn perform_key_exchange(
@@ -121,13 +117,78 @@ fn send_transfer_metadata(
 }
 
 fn send_files(
-    _server_connection: &mut dyn EncryptedIrisStream,
-    _cipher_type: CipherType,
-    _encryption_key: &[u8],
-    _complete_file_list: Vec<(PathBuf, FileMetadata)>,
-    _buffer: &mut [u8],
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher_type: CipherType,
+    encryption_key: &[u8],
+    complete_file_list: Vec<(PathBuf, FileMetadata)>,
 ) -> Result<(), IrisError> {
-    todo!()
+    let mut buffer = vec![0; CHUNK_SIZE.into_usize()];
+    let cipher = get_cipher(cipher_type, encryption_key)?;
+
+    for (file_path, file_metadata) in complete_file_list.iter() {
+        tracing::debug!("sending file metadata for {file_path:?}");
+        let serialized_file_metadata =
+            serde_json::to_vec(&file_metadata).map_err(|_| IrisError::SerializationError)?;
+        server_connection.write_encrypted_message(&*cipher, &serialized_file_metadata)?;
+
+        match file_metadata.get_file_type() {
+            FileType::Directory => process_directory(server_connection, &*cipher)?,
+            FileType::File => process_file(server_connection, &*cipher, file_path, &mut buffer)?,
+        }
+    }
+
+    Ok(())
+}
+
+fn process_directory(
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher: &dyn Cipher,
+) -> Result<(), IrisError> {
+    match server_connection.read_encrypted_iris_message(cipher)? {
+        IrisMessage::DirectoryCreated | IrisMessage::FileSkipped => Ok(()),
+        _ => Err(IrisError::UnexpectedMessage),
+    }
+}
+
+fn process_file(
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher: &dyn Cipher,
+    file_path: &Path,
+    buffer: &mut [u8],
+) -> Result<(), IrisError> {
+    match server_connection.read_encrypted_iris_message(cipher)? {
+        IrisMessage::FileStartAtPos { start_pos } => {
+            let mut file = File::open(file_path)
+                .map_err(|_| IrisError::PermissionsUserIOError(file_path.display().to_string()))?;
+            file.seek(SeekFrom::Start(start_pos))
+                .map_err(|_| IrisError::PermissionsUserIOError(file_path.display().to_string()))?;
+
+            while let Ok(bytes_read) = file.read(&mut buffer[..]) {
+                if bytes_read > 0 {
+                    tracing::debug!("read {bytes_read} bytes");
+                    server_connection.write_encrypted_message(cipher, &buffer[..bytes_read])?;
+
+                    match server_connection.read_encrypted_iris_message(cipher)? {
+                        IrisMessage::ChunkReceived { is_last } => {
+                            if is_last {
+                                tracing::debug!("last chunk received");
+                                break;
+                            } else {
+                                tracing::debug!("chunk received");
+                            }
+                        }
+                        _ => Err(IrisError::UnexpectedMessage)?,
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            Ok(())
+        }
+        IrisMessage::FileSkipped => Ok(()),
+        _ => Err(IrisError::UnexpectedMessage),
+    }
 }
 
 fn get_complete_file_list_and_total_size(

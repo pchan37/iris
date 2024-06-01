@@ -74,6 +74,14 @@ pub fn serve(ip_address: String, port: String) -> Result<(), IrisError> {
                             receiver_socket
                                 .forward_message(sender_socket.as_mut())
                                 .unwrap();
+
+                            // Relay the files
+                            // Fail the entire transaction if sender/receiver is disconnected via unwrap.
+                            while sender_socket.forward_message(&mut receiver_socket).is_ok() {
+                                receiver_socket.forward_message(sender_socket.as_mut())?;
+                            }
+
+                            tracing::debug!("done relaying");
                         } else {
                             // Fail the entire transaction if receiver is disconnected via unwrap.
                             receiver_socket

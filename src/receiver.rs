@@ -1,7 +1,11 @@
+use std::path::Path;
+
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
-use crate::cipher::{get_cipher, CipherType};
+use crate::cipher::{get_cipher, Cipher, CipherType};
+use crate::constants::CHUNK_SIZE;
 use crate::errors::IrisError;
+use crate::files::{File, FileMetadata, FileType};
 use crate::iris_stream::{EncryptedIrisStream, IrisStream};
 use crate::iris_tcp_stream::IrisTcpStream;
 use crate::room_mapping::RoomIdentifier;
@@ -102,10 +106,142 @@ fn receive_transfer_metadata(
 }
 
 fn receive_files(
-    _server_connection: &mut dyn EncryptedIrisStream,
-    _cipher_type: CipherType,
-    _decryption_key: &[u8],
-    _conficting_file_mode: ConflictingFileMode,
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher_type: CipherType,
+    decryption_key: &[u8],
+    conflicting_file_mode: ConflictingFileMode,
 ) -> Result<(), IrisError> {
-    todo!()
+    let cipher = get_cipher(cipher_type, decryption_key)?;
+    while let Ok(raw_file_metadata) = server_connection.read_encrypted_message(&*cipher) {
+        let file_metadata = serde_json::from_slice::<FileMetadata>(&raw_file_metadata)
+            .map_err(|_| IrisError::DeserializationError)?;
+        tracing::debug!("received the following metadata: {file_metadata:?}");
+
+        match file_metadata.get_file_type() {
+            FileType::Directory => process_directory(
+                server_connection,
+                &*cipher,
+                file_metadata,
+                conflicting_file_mode,
+            )?,
+            FileType::File => process_file(
+                server_connection,
+                &*cipher,
+                file_metadata,
+                conflicting_file_mode,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn process_directory(
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher: &dyn Cipher,
+    file_metadata: FileMetadata,
+    conflicting_file_mode: ConflictingFileMode,
+) -> Result<(), IrisError> {
+    match conflicting_file_mode {
+        ConflictingFileMode::Overwrite => {
+            let _ = std::fs::remove_dir_all(file_metadata.get_filename());
+            std::fs::create_dir(file_metadata.get_filename()).map_err(|_| {
+                IrisError::PermissionsUserIOError(
+                    file_metadata.get_filename().display().to_string(),
+                )
+            })?;
+        }
+        ConflictingFileMode::Skip | ConflictingFileMode::Resume => {
+            if std::fs::create_dir(file_metadata.get_filename()).is_err() {
+                return server_connection
+                    .write_encrypted_iris_message(cipher, IrisMessage::FileSkipped);
+            }
+        }
+        ConflictingFileMode::Error => {
+            std::fs::create_dir(file_metadata.get_filename()).map_err(|_| {
+                IrisError::AlreadyExistsUserIOError(
+                    file_metadata.get_filename().display().to_string(),
+                )
+            })?;
+        }
+    }
+
+    tracing::debug!("created directory");
+    server_connection.write_encrypted_iris_message(cipher, IrisMessage::DirectoryCreated)?;
+    Ok(())
+}
+
+fn process_file(
+    server_connection: &mut dyn EncryptedIrisStream,
+    cipher: &dyn Cipher,
+    file_metadata: FileMetadata,
+    conflicting_file_mode: ConflictingFileMode,
+) -> Result<(), IrisError> {
+    let filename = file_metadata.get_filename();
+
+    let (mut file, file_start_pos) = match get_file_and_start_pos(filename, conflicting_file_mode)?
+    {
+        Some((file, start_pos)) => {
+            if start_pos == file_metadata.get_size() {
+                tracing::debug!("entire file already transferred, skipping");
+                return server_connection
+                    .write_encrypted_iris_message(cipher, IrisMessage::FileSkipped);
+            } else {
+                server_connection.write_encrypted_iris_message(
+                    cipher,
+                    IrisMessage::FileStartAtPos { start_pos },
+                )?;
+                (file, start_pos)
+            }
+        }
+        None => {
+            return server_connection.write_encrypted_iris_message(cipher, IrisMessage::FileSkipped)
+        }
+    };
+
+    let mut bytes_left_to_read = file_metadata.get_size() - file_start_pos;
+    while bytes_left_to_read > 0 {
+        tracing::debug!("still have {bytes_left_to_read} bytes");
+
+        let file_chunk = server_connection.read_encrypted_message(cipher)?;
+        tracing::debug!("got chunk of size: {} bytes", file_chunk.len());
+        file.write_chunk(&file_chunk)?;
+        tracing::debug!("wrote chunk");
+
+        bytes_left_to_read = bytes_left_to_read.saturating_sub(CHUNK_SIZE);
+        server_connection.write_encrypted_iris_message(
+            cipher,
+            IrisMessage::ChunkReceived {
+                is_last: bytes_left_to_read == 0,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn get_file_and_start_pos(
+    filename: &Path,
+    conflicting_file_mode: ConflictingFileMode,
+) -> Result<Option<(File, u64)>, IrisError> {
+    match conflicting_file_mode {
+        ConflictingFileMode::Overwrite => {
+            let file = File::open_in_overwrite(filename.to_path_buf())?;
+            Ok(Some((file, 0)))
+        }
+        ConflictingFileMode::Skip => match File::open_new_in_append(filename.to_path_buf()) {
+            Ok(file) => Ok(Some((file, 0))),
+            Err(_) => Ok(None),
+        },
+        ConflictingFileMode::Resume => {
+            let file = File::open_in_append(filename.to_path_buf())?;
+            let file_size = file
+                .get_size()
+                .map_err(|_| IrisError::PermissionsUserIOError(filename.display().to_string()))?;
+            Ok(Some((file, file_size)))
+        }
+        ConflictingFileMode::Error => {
+            let file = File::open_new_in_append(filename.to_path_buf())?;
+            Ok(Some((file, 0)))
+        }
+    }
 }
