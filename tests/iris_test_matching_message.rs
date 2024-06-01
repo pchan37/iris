@@ -26,7 +26,7 @@ fn test_matching_message() {
 
     thread::scope(|s| {
         s.spawn(|| {
-            let files = vec!["./tests/iris_test_matching_message.rs".into()];
+            let files = vec!["./tests/aaa".into()];
             send(
                 &mut sender_connection,
                 2000,
@@ -71,4 +71,6 @@ fn test_matching_message() {
             "sender did a {sender_message:?}, but receiver did a {receiver_message:?}"
         );
     }
+
+    std::fs::remove_file("aaa").unwrap();
 }

@@ -23,7 +23,7 @@ fn test_no_consecutive_same_io() {
 
     thread::scope(|s| {
         s.spawn(|| {
-            let files = vec!["./tests/iris_test_no_consecutive_same_io.rs".into()];
+            let files = vec!["./tests/bbb".into()];
             send(
                 &mut sender_connection,
                 3000,
@@ -49,6 +49,8 @@ fn test_no_consecutive_same_io() {
 
     check_no_consecutive_io(sender_messages_sent);
     check_no_consecutive_io(receiver_messages_sent);
+
+    std::fs::remove_file("bbb").unwrap();
 }
 
 fn check_no_consecutive_io(messages_sent: Vec<MessageTracker>) {
