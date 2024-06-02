@@ -1,3 +1,4 @@
+mod aes256gcm;
 mod xchacha20poly1305;
 
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,7 @@ use crate::errors::IrisError;
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone, Copy, Default)]
 pub enum CipherType {
+    Aes256Gcm,
     #[default]
     XChaCha20Poly1305,
 }
@@ -24,6 +26,7 @@ pub trait Cipher {
 
 pub fn get_cipher(cipher_type: CipherType, key: &[u8]) -> Result<Box<dyn Cipher>, IrisError> {
     match cipher_type {
+        CipherType::Aes256Gcm => aes256gcm::initiate_cipher(key),
         CipherType::XChaCha20Poly1305 => xchacha20poly1305::initiate_cipher(key),
     }
 }
