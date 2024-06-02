@@ -1,11 +1,14 @@
 mod aes256gcm;
 mod xchacha20poly1305;
 
+#[cfg(feature = "clap")]
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::IrisError;
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone, Copy, Default)]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
 pub enum CipherType {
     Aes256Gcm,
     #[default]

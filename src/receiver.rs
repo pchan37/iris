@@ -1,5 +1,7 @@
 use std::path::Path;
 
+#[cfg(feature = "clap")]
+use clap::ValueEnum;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 use crate::cipher::{get_cipher, Cipher, CipherType};
@@ -12,6 +14,7 @@ use crate::room_mapping::RoomIdentifier;
 use crate::IrisMessage;
 
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
 pub enum ConflictingFileMode {
     Overwrite,
     Skip,
