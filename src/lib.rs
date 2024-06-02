@@ -1,11 +1,13 @@
 mod cipher;
 mod constants;
+mod default_wordlist;
 mod errors;
 mod files;
 #[doc(hidden)]
 pub mod iris_channel_stream;
 pub mod iris_stream;
 mod iris_tcp_stream;
+mod passphrase;
 mod receiver;
 mod room_mapping;
 mod sender;
@@ -14,6 +16,10 @@ mod server;
 use serde::{Deserialize, Serialize};
 
 pub use crate::cipher::CipherType;
+pub use crate::default_wordlist::WORDLIST;
+pub use crate::passphrase::{
+    get_passphrase_from_str_wordlist, get_passphrase_from_string_wordlist,
+};
 pub use crate::receiver::{receive, simple_receive, ConflictingFileMode};
 use crate::room_mapping::RoomIdentifier;
 pub use crate::sender::{send, simple_send};

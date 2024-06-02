@@ -19,16 +19,15 @@ pub fn simple_send(
     server_ip: String,
     server_port: String,
     cipher_type: CipherType,
+    passphrase: &str,
     files: Vec<PathBuf>,
 ) -> Result<(), IrisError> {
-    let passphrase = "this-is-secret";
-
     let mut server_connection = IrisTcpStream::connect(format!("{server_ip}:{server_port}"))?;
     server_connection.write_iris_message(IrisMessage::SenderConnecting)?;
 
     match server_connection.read_iris_message()? {
         IrisMessage::AssignedRoomIdentifier { room_identifier } => {
-            tracing::info!("assigned {room_identifier}");
+            tracing::info!("connect using {room_identifier}-{passphrase}");
             if matches!(
                 server_connection.read_iris_message()?,
                 IrisMessage::ReceiverConnected
