@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::cipher::CipherType;
 pub use crate::default_wordlist::WORDLIST;
+pub use crate::errors::IrisError;
 pub use crate::passphrase::{
     get_passphrase_from_str_wordlist, get_passphrase_from_string_wordlist,
 };
