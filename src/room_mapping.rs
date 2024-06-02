@@ -9,7 +9,7 @@ pub type RoomIdentifier = u16;
 
 #[derive(Debug, Default)]
 pub struct RoomMapping {
-    rooms: HashMap<RoomIdentifier, Box<dyn EncryptedIrisStream>>,
+    rooms: HashMap<RoomIdentifier, Box<dyn EncryptedIrisStream + Send>>,
 }
 
 impl RoomMapping {
@@ -17,7 +17,7 @@ impl RoomMapping {
         Self::default()
     }
 
-    pub fn insert_socket(&mut self, socket: impl EncryptedIrisStream + 'static) -> RoomIdentifier {
+    pub fn insert_socket(&mut self, socket: impl EncryptedIrisStream + Send + 'static) -> RoomIdentifier {
         let mut rng = rand::thread_rng();
         loop {
             let room_identifier = rng.gen_range(1000..=9999);
@@ -31,7 +31,7 @@ impl RoomMapping {
     pub fn get_and_remove_socket(
         &mut self,
         room_identifier: RoomIdentifier,
-    ) -> Option<Box<dyn EncryptedIrisStream>> {
+    ) -> Option<Box<dyn EncryptedIrisStream + Send>> {
         self.rooms.remove(&room_identifier)
     }
 }
