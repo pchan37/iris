@@ -17,7 +17,10 @@ impl RoomMapping {
         Self::default()
     }
 
-    pub fn insert_socket(&mut self, socket: impl EncryptedIrisStream + Send + 'static) -> RoomIdentifier {
+    pub fn insert_socket(
+        &mut self,
+        socket: impl EncryptedIrisStream + Send + 'static,
+    ) -> RoomIdentifier {
         let mut rng = rand::thread_rng();
         loop {
             let room_identifier = rng.gen_range(1000..=9999);
