@@ -8,6 +8,7 @@ pub mod iris_channel_stream;
 pub mod iris_stream;
 mod iris_tcp_stream;
 mod passphrase;
+mod progress;
 mod receiver;
 mod room_mapping;
 mod sender;
@@ -20,6 +21,11 @@ pub use crate::default_wordlist::WORDLIST;
 pub use crate::errors::IrisError;
 pub use crate::passphrase::{
     get_passphrase_from_str_wordlist, get_passphrase_from_string_wordlist,
+};
+pub use crate::progress::{
+    get_receiver_communication_channels, get_sender_communication_channels,
+    ReceiverProgressCommunication, ReceiverProgressMessage, ReceiverWorkerCommunication,
+    SenderProgressCommunication, SenderProgressMessage, SenderWorkerCommunication, WorkerMessage,
 };
 pub use crate::receiver::{receive, simple_receive, ConflictingFileMode};
 use crate::room_mapping::RoomIdentifier;

@@ -10,6 +10,7 @@ use crate::errors::IrisError;
 use crate::files::{File, FileMetadata, FileType};
 use crate::iris_stream::{EncryptedIrisStream, IrisStream};
 use crate::iris_tcp_stream::IrisTcpStream;
+use crate::progress::{ReceiverProgressCommunication, ReceiverProgressMessage, WorkerMessage};
 use crate::room_mapping::RoomIdentifier;
 use crate::IrisMessage;
 
@@ -29,6 +30,7 @@ pub fn simple_receive(
     room_identifier_str: &str,
     passphrase: &str,
     conflicting_file_mode: ConflictingFileMode,
+    progress_communication: &ReceiverProgressCommunication,
 ) -> Result<(), IrisError> {
     let room_identifier = room_identifier_str
         .parse::<RoomIdentifier>()
@@ -43,6 +45,7 @@ pub fn simple_receive(
         room_identifier,
         passphrase,
         conflicting_file_mode,
+        progress_communication,
     )
 }
 
@@ -51,15 +54,28 @@ pub fn receive(
     room_identifier: RoomIdentifier,
     passphrase: &str,
     conflicting_file_mode: ConflictingFileMode,
+    progress_communication: &ReceiverProgressCommunication,
 ) -> Result<(), IrisError> {
     match server_connection.read_iris_message()? {
         IrisMessage::SetCipherType { cipher_type } => {
             tracing::debug!("using cipher: {cipher_type:?}");
             let key = perform_key_exchange(server_connection, room_identifier, passphrase)?;
+            progress_communication.write(ReceiverProgressMessage::SetCipher { cipher_type })?;
             tracing::info!("switching over to encrypted communication");
 
-            receive_transfer_metadata(server_connection, cipher_type, &key)?;
-            receive_files(server_connection, cipher_type, &key, conflicting_file_mode)
+            receive_transfer_metadata(
+                server_connection,
+                cipher_type,
+                &key,
+                progress_communication,
+            )?;
+            receive_files(
+                server_connection,
+                cipher_type,
+                &key,
+                conflicting_file_mode,
+                progress_communication,
+            )
         }
         IrisMessage::BadRoomIdentifier => Err(IrisError::InvalidPassphrase),
         _ => Err(IrisError::UnexpectedMessage),
@@ -87,6 +103,7 @@ fn receive_transfer_metadata(
     server_connection: &mut dyn EncryptedIrisStream,
     cipher_type: CipherType,
     decryption_key: &[u8],
+    progress_communication: &ReceiverProgressCommunication,
 ) -> Result<(), IrisError> {
     let cipher = get_cipher(cipher_type, decryption_key)?;
 
@@ -100,9 +117,12 @@ fn receive_transfer_metadata(
             tracing::info!(
                 "going to receive {total_bytes} bytes distributed among {total_files} files"
             );
+            progress_communication.write(ReceiverProgressMessage::TransferMetadata {
+                total_files,
+                total_bytes,
+            })?;
             server_connection
-                .write_encrypted_iris_message(&*cipher, IrisMessage::ReadyToReceiveFiles)?;
-            Ok(())
+                .write_encrypted_iris_message(&*cipher, IrisMessage::ReadyToReceiveFiles)
         }
         _ => Err(IrisError::UnexpectedMessage),
     }
@@ -113,12 +133,17 @@ fn receive_files(
     cipher_type: CipherType,
     decryption_key: &[u8],
     conflicting_file_mode: ConflictingFileMode,
+    progress_communication: &ReceiverProgressCommunication,
 ) -> Result<(), IrisError> {
     let cipher = get_cipher(cipher_type, decryption_key)?;
     while let Ok(raw_file_metadata) = server_connection.read_encrypted_message(&*cipher) {
         let file_metadata = serde_json::from_slice::<FileMetadata>(&raw_file_metadata)
             .map_err(|_| IrisError::DeserializationError)?;
         tracing::debug!("received the following metadata: {file_metadata:?}");
+        progress_communication.write(ReceiverProgressMessage::FileMetadata {
+            filename: file_metadata.get_filename().to_path_buf(),
+            file_size: file_metadata.get_size(),
+        })?;
 
         match file_metadata.get_file_type() {
             FileType::Directory => process_directory(
@@ -126,13 +151,20 @@ fn receive_files(
                 &*cipher,
                 file_metadata,
                 conflicting_file_mode,
+                progress_communication,
             )?,
             FileType::File => process_file(
                 server_connection,
                 &*cipher,
                 file_metadata,
                 conflicting_file_mode,
+                progress_communication,
             )?,
+        }
+
+        if matches!(progress_communication.read()?, Some(WorkerMessage::Cancel)) {
+            tracing::debug!("exiting as user cancel");
+            std::process::exit(1);
         }
     }
     Ok(())
@@ -143,6 +175,7 @@ fn process_directory(
     cipher: &dyn Cipher,
     file_metadata: FileMetadata,
     conflicting_file_mode: ConflictingFileMode,
+    progress_communication: &ReceiverProgressCommunication,
 ) -> Result<(), IrisError> {
     match conflicting_file_mode {
         ConflictingFileMode::Overwrite => {
@@ -155,6 +188,7 @@ fn process_directory(
         }
         ConflictingFileMode::Skip | ConflictingFileMode::Resume => {
             if std::fs::create_dir(file_metadata.get_filename()).is_err() {
+                progress_communication.write(ReceiverProgressMessage::FileSkipped)?;
                 return server_connection
                     .write_encrypted_iris_message(cipher, IrisMessage::FileSkipped);
             }
@@ -169,6 +203,7 @@ fn process_directory(
     }
 
     tracing::debug!("created directory");
+    progress_communication.write(ReceiverProgressMessage::DirectoryCreated)?;
     server_connection.write_encrypted_iris_message(cipher, IrisMessage::DirectoryCreated)?;
     Ok(())
 }
@@ -178,6 +213,7 @@ fn process_file(
     cipher: &dyn Cipher,
     file_metadata: FileMetadata,
     conflicting_file_mode: ConflictingFileMode,
+    progress_communication: &ReceiverProgressCommunication,
 ) -> Result<(), IrisError> {
     let filename = file_metadata.get_filename();
 
@@ -186,9 +222,12 @@ fn process_file(
         Some((file, start_pos)) => {
             if start_pos == file_metadata.get_size() {
                 tracing::debug!("entire file already transferred, skipping");
+                progress_communication.write(ReceiverProgressMessage::FileSkipped)?;
                 return server_connection
                     .write_encrypted_iris_message(cipher, IrisMessage::FileSkipped);
             } else {
+                progress_communication
+                    .write(ReceiverProgressMessage::ChunkReceived { size: start_pos })?;
                 server_connection.write_encrypted_iris_message(
                     cipher,
                     IrisMessage::FileStartAtPos { start_pos },
@@ -197,7 +236,9 @@ fn process_file(
             }
         }
         None => {
-            return server_connection.write_encrypted_iris_message(cipher, IrisMessage::FileSkipped)
+            progress_communication.write(ReceiverProgressMessage::FileSkipped)?;
+            return server_connection
+                .write_encrypted_iris_message(cipher, IrisMessage::FileSkipped);
         }
     };
 
@@ -210,6 +251,9 @@ fn process_file(
         file.write_chunk(&file_chunk)?;
         tracing::debug!("wrote chunk");
 
+        progress_communication.write(ReceiverProgressMessage::ChunkReceived {
+            size: CHUNK_SIZE.min(bytes_left_to_read),
+        })?;
         bytes_left_to_read = bytes_left_to_read.saturating_sub(CHUNK_SIZE);
         server_connection.write_encrypted_iris_message(
             cipher,
@@ -217,6 +261,11 @@ fn process_file(
                 is_last: bytes_left_to_read == 0,
             },
         )?;
+
+        if matches!(progress_communication.read()?, Some(WorkerMessage::Cancel)) {
+            tracing::debug!("exiting as user cancel");
+            std::process::exit(1);
+        }
     }
 
     Ok(())

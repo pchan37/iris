@@ -1,7 +1,10 @@
 use std::thread;
 
 use iris::iris_channel_stream::{IrisChannelStream, MessageTracker};
-use iris::{receive, send, CipherType, ConflictingFileMode};
+use iris::{
+    get_receiver_communication_channels, get_sender_communication_channels, receive, send,
+    CipherType, ConflictingFileMode,
+};
 
 /// Checks that neither sender nor receiver does consecutive read or consecutive write.
 #[test]
@@ -23,6 +26,7 @@ fn test_no_consecutive_same_io() {
 
     thread::scope(|s| {
         s.spawn(|| {
+            let (_worker_communication, progress_communication) = get_sender_communication_channels();
             let files = vec!["./tests/bbb".into()];
             send(
                 &mut sender_connection,
@@ -30,15 +34,18 @@ fn test_no_consecutive_same_io() {
                 "this-is-secret",
                 CipherType::XChaCha20Poly1305,
                 files,
+                &progress_communication,
             )
             .unwrap();
         });
         s.spawn(|| {
+            let (_worker_communication, progress_communication) = get_receiver_communication_channels();
             receive(
                 &mut receiver_connection,
                 3000,
                 "this-is-secret",
                 ConflictingFileMode::Error,
+                &progress_communication,
             )
             .unwrap();
         });

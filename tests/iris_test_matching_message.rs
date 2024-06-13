@@ -2,7 +2,10 @@ use std::iter::zip;
 use std::thread;
 
 use iris::iris_channel_stream::{IrisChannelStream, MessageTracker};
-use iris::{receive, send, CipherType, ConflictingFileMode};
+use iris::{
+    get_receiver_communication_channels, get_sender_communication_channels, receive, send,
+    CipherType, ConflictingFileMode,
+};
 
 /// Checks that for every read, the other party does a corresponding a write and vice versa.
 ///
@@ -27,21 +30,25 @@ fn test_matching_message() {
     thread::scope(|s| {
         s.spawn(|| {
             let files = vec!["./tests/aaa".into()];
+            let (_worker_communication, progress_communication) = get_sender_communication_channels();
             send(
                 &mut sender_connection,
                 2000,
                 "this-is-secret",
                 CipherType::XChaCha20Poly1305,
                 files,
+                &progress_communication,
             )
             .unwrap();
         });
         s.spawn(|| {
+            let (_worker_communication, progress_communication) = get_receiver_communication_channels();
             receive(
                 &mut receiver_connection,
                 2000,
                 "this-is-secret",
                 ConflictingFileMode::Error,
+                &progress_communication,
             )
             .unwrap();
         });

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use jwalk::WalkDirGeneric;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
-use usize_cast::IntoUsize;
+use usize_cast::{FromUsize, IntoUsize};
 
 use crate::cipher::{get_cipher, Cipher, CipherType};
 use crate::constants::CHUNK_SIZE;
@@ -12,6 +12,7 @@ use crate::errors::IrisError;
 use crate::files::{FileMetadata, FileType};
 use crate::iris_stream::{EncryptedIrisStream, IrisStream};
 use crate::iris_tcp_stream::IrisTcpStream;
+use crate::progress::{SenderProgressCommunication, SenderProgressMessage, WorkerMessage};
 use crate::room_mapping::RoomIdentifier;
 use crate::IrisMessage;
 
@@ -21,6 +22,7 @@ pub fn simple_send(
     cipher_type: CipherType,
     passphrase: &str,
     files: Vec<PathBuf>,
+    progress_communication: &SenderProgressCommunication,
 ) -> Result<(), IrisError> {
     let mut server_connection = IrisTcpStream::connect(format!("{server_ip}:{server_port}"))?;
     server_connection.write_iris_message(IrisMessage::SenderConnecting)?;
@@ -28,6 +30,8 @@ pub fn simple_send(
     match server_connection.read_iris_message()? {
         IrisMessage::AssignedRoomIdentifier { room_identifier } => {
             tracing::info!("connect using {room_identifier}-{passphrase}");
+            progress_communication
+                .write(SenderProgressMessage::AssignedRoomIdentifier { room_identifier })?;
             if matches!(
                 server_connection.read_iris_message()?,
                 IrisMessage::ReceiverConnected
@@ -38,6 +42,7 @@ pub fn simple_send(
                     passphrase,
                     cipher_type,
                     files,
+                    progress_communication,
                 )
             } else {
                 Err(IrisError::UnexpectedMessage)
@@ -54,13 +59,27 @@ pub fn send(
     passphrase: &str,
     cipher_type: CipherType,
     files: Vec<PathBuf>,
+    progress_communication: &SenderProgressCommunication,
 ) -> Result<(), IrisError> {
     server_connection.write_iris_message(IrisMessage::SetCipherType { cipher_type })?;
     let key = perform_key_exchange(server_connection, room_identifier, passphrase)?;
+    progress_communication.write(SenderProgressMessage::SetCipher { cipher_type })?;
     tracing::info!("switching over to encrypted communication");
 
-    let complete_file_list = send_transfer_metadata(server_connection, cipher_type, &key, files)?;
-    send_files(server_connection, cipher_type, &key, complete_file_list)
+    let complete_file_list = send_transfer_metadata(
+        server_connection,
+        cipher_type,
+        &key,
+        files,
+        progress_communication,
+    )?;
+    send_files(
+        server_connection,
+        cipher_type,
+        &key,
+        complete_file_list,
+        progress_communication,
+    )
 }
 
 fn perform_key_exchange(
@@ -85,6 +104,7 @@ fn send_transfer_metadata(
     cipher_type: CipherType,
     encryption_key: &[u8],
     files: Vec<PathBuf>,
+    progress_communication: &SenderProgressCommunication,
 ) -> Result<Vec<(PathBuf, FileMetadata)>, IrisError> {
     let cipher = get_cipher(cipher_type, encryption_key)?;
 
@@ -98,6 +118,10 @@ fn send_transfer_metadata(
     if !matches!(iris_message, IrisMessage::ReadyToReceiveMetadata) {
         return Err(IrisError::UnexpectedMessage);
     }
+    progress_communication.write(SenderProgressMessage::TransferMetadata {
+        total_files: complete_file_list.len(),
+        total_bytes: total_size,
+    })?;
     server_connection.write_encrypted_iris_message(
         &*cipher,
         IrisMessage::TransferMetadata {
@@ -120,19 +144,37 @@ fn send_files(
     cipher_type: CipherType,
     encryption_key: &[u8],
     complete_file_list: Vec<(PathBuf, FileMetadata)>,
+    progress_communication: &SenderProgressCommunication,
 ) -> Result<(), IrisError> {
     let mut buffer = vec![0; CHUNK_SIZE.into_usize()];
     let cipher = get_cipher(cipher_type, encryption_key)?;
 
     for (file_path, file_metadata) in complete_file_list.iter() {
         tracing::debug!("sending file metadata for {file_path:?}");
+        progress_communication.write(SenderProgressMessage::FileMetadata {
+            filename: file_metadata.get_filename().to_path_buf(),
+            file_size: file_metadata.get_size(),
+        })?;
         let serialized_file_metadata =
             serde_json::to_vec(&file_metadata).map_err(|_| IrisError::SerializationError)?;
         server_connection.write_encrypted_message(&*cipher, &serialized_file_metadata)?;
 
         match file_metadata.get_file_type() {
-            FileType::Directory => process_directory(server_connection, &*cipher)?,
-            FileType::File => process_file(server_connection, &*cipher, file_path, &mut buffer)?,
+            FileType::Directory => {
+                process_directory(server_connection, &*cipher, progress_communication)?
+            }
+            FileType::File => process_file(
+                server_connection,
+                &*cipher,
+                file_path,
+                &mut buffer,
+                progress_communication,
+            )?,
+        }
+
+        if matches!(progress_communication.read()?, Some(WorkerMessage::Cancel)) {
+            tracing::debug!("exiting as user cancel");
+            std::process::exit(1);
         }
     }
 
@@ -142,9 +184,17 @@ fn send_files(
 fn process_directory(
     server_connection: &mut dyn EncryptedIrisStream,
     cipher: &dyn Cipher,
+    progress_communication: &SenderProgressCommunication,
 ) -> Result<(), IrisError> {
     match server_connection.read_encrypted_iris_message(cipher)? {
-        IrisMessage::DirectoryCreated | IrisMessage::FileSkipped => Ok(()),
+        IrisMessage::DirectoryCreated => {
+            progress_communication.write(SenderProgressMessage::DirectoryCreated)?;
+            Ok(())
+        }
+        IrisMessage::FileSkipped => {
+            progress_communication.write(SenderProgressMessage::FileSkipped)?;
+            Ok(())
+        }
         _ => Err(IrisError::UnexpectedMessage),
     }
 }
@@ -154,9 +204,11 @@ fn process_file(
     cipher: &dyn Cipher,
     file_path: &Path,
     buffer: &mut [u8],
+    progress_communication: &SenderProgressCommunication,
 ) -> Result<(), IrisError> {
     match server_connection.read_encrypted_iris_message(cipher)? {
         IrisMessage::FileStartAtPos { start_pos } => {
+            progress_communication.write(SenderProgressMessage::ChunkSent { size: start_pos })?;
             let mut file = File::open(file_path)
                 .map_err(|_| IrisError::PermissionsUserIOError(file_path.display().to_string()))?;
             file.seek(SeekFrom::Start(start_pos))
@@ -166,6 +218,9 @@ fn process_file(
                 if bytes_read > 0 {
                     tracing::debug!("read {bytes_read} bytes");
                     server_connection.write_encrypted_message(cipher, &buffer[..bytes_read])?;
+                    progress_communication.write(SenderProgressMessage::ChunkSent {
+                        size: u64::from_usize(bytes_read),
+                    })?;
 
                     match server_connection.read_encrypted_iris_message(cipher)? {
                         IrisMessage::ChunkReceived { is_last } => {
@@ -180,6 +235,11 @@ fn process_file(
                     }
                 } else {
                     break;
+                }
+
+                if matches!(progress_communication.read()?, Some(WorkerMessage::Cancel)) {
+                    tracing::debug!("exiting as user cancel");
+                    std::process::exit(1);
                 }
             }
 
