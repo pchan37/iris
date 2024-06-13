@@ -1,4 +1,4 @@
-pub static WORDLIST: [&'static str; 7776] = [
+pub static WORDLIST: [&str; 7776] = [
     "abacus",
     "abdomen",
     "abdominal",
