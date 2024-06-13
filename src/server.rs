@@ -17,6 +17,8 @@ pub fn serve(ip_address: String, port: String) -> Result<(), IrisError> {
     let mut room_mapping = RoomMapping::new();
     loop {
         if let Ok((socket, addr)) = listener.accept() {
+            // If we cannot convert the socket to a IrisTcpStream, we got a massive
+            // problem so the server should return the error and stop.
             let mut socket = IrisTcpStream::new(socket)?;
 
             if let Ok(message) = socket.read_iris_message() {
@@ -36,8 +38,9 @@ pub fn serve(ip_address: String, port: String) -> Result<(), IrisError> {
                             }
                         } else {
                             tracing::error!("failed to clone the socket");
-                            // Fail the entire transaction if sender is disconnected via unwrap.
-                            socket.write_iris_message(IrisMessage::ServerError).unwrap();
+                            // Ignore the error if sender disconnected, we do not want to bring
+                            // down the server as well
+                            let _ = socket.write_iris_message(IrisMessage::ServerError);
                         }
                     }
                     IrisMessage::ReceiverConnecting { room_identifier } => {
@@ -91,10 +94,10 @@ pub fn serve(ip_address: String, port: String) -> Result<(), IrisError> {
                                 tracing::debug!("done relaying");
                             });
                         } else {
-                            // Fail the entire transaction if receiver is disconnected via unwrap.
-                            receiver_socket
-                                .write_iris_message(IrisMessage::BadRoomIdentifier)
-                                .unwrap();
+                            // Ignore the error if receiver is disconnected, we do not want to bring
+                            // down the server as well
+                            let _ =
+                                receiver_socket.write_iris_message(IrisMessage::BadRoomIdentifier);
                         }
                     }
                     _ => tracing::warn!("detected an unexpected connection"),
